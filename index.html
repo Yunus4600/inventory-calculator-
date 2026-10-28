@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inventory Calculator</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+:root{--bg:#f6f5f1;--card:#fff;--ink:#1d1d1b;--mute:#6b6a64;--line:#e3e1d8;--accent:#1f6f4a;--accent-ink:#fff;--soft:#e8f2ec;color-scheme:light}
+@media (prefers-color-scheme: dark){:root{--bg:#161715;--card:#202220;--ink:#efeee9;--mute:#a09f97;--line:#34362f;--accent:#4fb582;--accent-ink:#0d1a13;--soft:#1d2b23;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.4}
+main{max-width:640px;margin:0 auto;padding:16px}
+h1{font-size:1.3rem;margin:4px 0 2px}
+.sub{color:var(--mute);font-size:.9rem;margin:0 0 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px}
+.row{display:flex;gap:10px}
+.row>div{flex:1;min-width:0}
+label{display:block;font-size:.8rem;color:var(--mute);margin-bottom:4px}
+input{width:100%;font:inherit;font-size:1.05rem;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)}
+input:focus{outline:2px solid var(--accent);outline-offset:1px}
+button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:11px 14px;cursor:pointer;background:var(--accent);color:var(--accent-ink)}
+button.alt{background:var(--soft);color:var(--ink)}
+button:disabled{opacity:.5;cursor:default}
+.result{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding:10px 12px;background:var(--soft);border-radius:10px}
+.result b{font-size:1.2rem}
+.add{width:100%;margin-top:12px}
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:right;padding:10px 8px;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+th{font-size:.8rem;color:var(--mute);font-weight:600}
+td.x{width:36px;padding:0;text-align:center}
+td.x button{background:none;color:var(--mute);padding:6px 8px;font-size:1.1rem}
+tr.total td{font-weight:700;font-size:1.05rem;border-bottom:0;background:var(--soft)}
+.empty{color:var(--mute);text-align:center;padding:20px 0}
+.actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+.actions button{flex:1}
+.status{color:var(--mute);font-size:.8rem;margin-top:10px;min-height:1em}
+</style>
+</head>
+<body>
+<main>
+  <h1>Inventory Calculator</h1>
+  <p class="sub" id="day"></p>
+
+  <section class="card">
+    <div class="row">
+      <div><label for="price">Current price (Rs/kg)</label><input id="price" type="number" inputmode="decimal" min="0" step="any" placeholder="0"></div>
+      <div><label for="qty">Quantity (kg)</label><input id="qty" type="number" inputmode="decimal" min="0" step="any" placeholder="0"></div>
+    </div>
+    <div class="result"><span>Price × Quantity</span><b id="calc">Rs 0</b></div>
+    <button class="add" id="add">Add to table</button>
+  </section>
+
+  <section class="card">
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Serial No.</th><th>Quantity (kg)</th><th>Price (Rs)</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="actions">
+      <button class="alt" id="sum">Sum of today’s prices</button>
+      <button id="dl">Download</button>
+    </div>
+    <div class="status" id="status"></div>
+  </section>
+</main>
+
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var rows = [], showTotal = false;
+  var d = new Date();
+  var dayKey = d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  var dayLabel = d.toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
+  $("day").textContent = dayLabel;
+
+  function fmt(n){ return Number(n).toLocaleString("en-IN",{maximumFractionDigits:2}); }
+  function total(){ return rows.reduce(function(s,r){ return s + r.p; },0); }
+  function status(t){ $("status").textContent = t || ""; }
+
+  function render(){
+    var tb = $("rows"); tb.innerHTML = "";
+    if(!rows.length){
+      var tr = document.createElement("tr"), td = document.createElement("td");
+      td.colSpan = 4; td.className = "empty"; td.textContent = "No entries yet. Add one above.";
+      tr.appendChild(td); tb.appendChild(tr);
+    }
+    rows.forEach(function(r,i){
+      var tr = document.createElement("tr");
+      [i+1, fmt(r.q), fmt(r.p)].forEach(function(v){ var td = document.createElement("td"); td.textContent = v; tr.appendChild(td); });
+      var x = document.createElement("td"); x.className = "x";
+      var b = document.createElement("button"); b.textContent = "×"; b.setAttribute("aria-label","Delete row " + (i+1));
+      b.onclick = function(){ rows.splice(i,1); render(); save(); };
+      x.appendChild(b); tr.appendChild(x); tb.appendChild(tr);
+    });
+    if(showTotal && rows.length){
+      var t = document.createElement("tr"); t.className = "total";
+      var c1 = document.createElement("td"); c1.textContent = "Total";
+      var c2 = document.createElement("td");
+      var c3 = document.createElement("td"); c3.textContent = fmt(total());
+      var c4 = document.createElement("td");
+      [c1,c2,c3,c4].forEach(function(c){ t.appendChild(c); });
+      tb.appendChild(t);
+    }
+    $("dl").disabled = !rows.length;
+  }
+
+  function save(){
+    try{ localStorage.setItem("inv-" + dayKey, JSON.stringify(rows)); status("Saved on this device"); }
+    catch(e){ status("Could not save. Changes stay on this screen only."); }
+  }
+
+  function calc(){
+    var p = parseFloat($("price").value), q = parseFloat($("qty").value);
+    $("calc").textContent = "Rs " + fmt((isNaN(p)||isNaN(q)) ? 0 : Math.round(p*q*100)/100);
+  }
+  $("price").addEventListener("input",calc);
+  $("qty").addEventListener("input",calc);
+
+  $("add").onclick = function(){
+    var p = parseFloat($("price").value), q = parseFloat($("qty").value);
+    if(isNaN(p) || isNaN(q) || p <= 0 || q <= 0){ status("Enter a price and a quantity above zero."); return; }
+    rows.push({q:q, p:Math.round(p*q*100)/100});
+    $("qty").value = ""; calc(); render(); save(); $("qty").focus();
+  };
+
+  $("sum").onclick = function(){
+    showTotal = !showTotal;
+    $("sum").textContent = showTotal ? "Hide sum" : "Sum of today’s prices";
+    render();
+  };
+
+  function makePdf(){
+    var doc = new window.jspdf.jsPDF();
+    var y = 20;
+    doc.setFontSize(16); doc.text("Inventory - " + dayLabel, 14, y); y += 12;
+    doc.setFontSize(11); doc.setFont(undefined,"bold");
+    doc.text("Serial No.", 14, y); doc.text("Quantity (kg)", 90, y, {align:"right"}); doc.text("Price (Rs)", 190, y, {align:"right"});
+    doc.setFont(undefined,"normal"); y += 3; doc.line(14,y,196,y); y += 7;
+    rows.forEach(function(r,i){
+      if(y > 275){ doc.addPage(); y = 20; }
+      doc.text(String(i+1), 14, y); doc.text(fmt(r.q), 90, y, {align:"right"}); doc.text(fmt(r.p), 190, y, {align:"right"}); y += 8;
+    });
+    y += 2; doc.line(14,y,196,y); y += 8;
+    doc.setFont(undefined,"bold"); doc.text("Sum of all prices", 14, y); doc.text("Rs " + fmt(total()), 190, y, {align:"right"});
+    return doc.output("blob");
+  }
+
+  function makeCsv(){
+    var out = ["Serial No.,Quantity (kg),Price (Rs)"];
+    rows.forEach(function(r,i){ out.push((i+1)+","+r.q+","+r.p); });
+    out.push("Total,," + total());
+    return new Blob([out.join("\n")],{type:"text/csv"});
+  }
+
+  function saveBlob(blob, name){
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
+  }
+
+  $("dl").onclick = function(){
+    try{
+      if(window.jspdf && window.jspdf.jsPDF) saveBlob(makePdf(), "inventory-" + dayKey + ".pdf");
+      else saveBlob(makeCsv(), "inventory-" + dayKey + ".csv");
+      status("Downloaded");
+    }catch(e){ status("Download failed."); }
+  };
+
+  try{
+    var saved = JSON.parse(localStorage.getItem("inv-" + dayKey) || "[]");
+    if(Array.isArray(saved)) rows = saved;
+  }catch(e){}
+  render();
+})();
+</script>
+</body>
+</html>
